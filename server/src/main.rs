@@ -1,56 +1,71 @@
 pub mod thread_pool;
 
+use futures::{channel::mpsc, SinkExt};
 use std::env;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncBufReadExt, BufReader, WriteHalf};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::stream::StreamExt;
 
-struct Clients {
-	streams: Vec<Option<TcpStream>>,
+use ::chat::channels::Channel;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type Sender<T> = mpsc::UnboundedSender<T>;
+type Receiver<T> = mpsc::UnboundedReceiver<T>;
+
+enum Event {
+	Connection {
+		nick: String,
+		stream: WriteHalf<TcpStream>,
+	},
+	Message {
+		nick: String,
+		msg: String,
+	},
 }
 
-impl Clients {
-	fn new(size: usize) -> Clients {
-		let mut streams = Vec::new();
-		streams.resize_with(size, || None);
-		Clients { streams }
-	}
+async fn handler(stream: TcpStream, mut sender: Sender<Event>) -> Result<()> {
+	let (reader, writer) = tokio::io::split(stream);
+	let reader = BufReader::new(reader);
+	let mut lines = reader.lines();
+	let nick = match lines.next().await {
+		// TODO: Implement a proper error type
+		None => Err("client disconnected")?,
+		Some(line) => line?,
+	};
 
-	fn push(&mut self, stream: TcpStream) -> Option<usize> {
-		for (i, client) in self.streams.iter().enumerate() {
-			if client.is_none() {
-				self.streams[i] = Some(stream);
-				return Some(i);
-			}
-		}
-		None
-	}
+	sender
+		.send(Event::Connection {
+			nick: nick.clone(),
+			stream: writer,
+		})
+		.await
+		.unwrap();
 
-	fn pop(&mut self, id: usize) {
-		self.streams[id] = None;
+	while let Some(msg) = lines.next().await {
+		sender
+			.send(Event::Message {
+				nick: nick.clone(),
+				msg: msg.unwrap(),
+			})
+			.await
+			.unwrap();
 	}
+	Ok(())
 }
 
-fn handle_client(clients: Arc<Mutex<Clients>>, mut reader: BufReader<TcpStream>, id: usize) {
-	let mut data = String::new();
-	let size = reader.read_line(&mut data).unwrap();
-
-	let mut clients_guard = clients.lock().unwrap();
-	if size > 0 {
-		for (i, stream) in clients_guard.streams.iter_mut().enumerate() {
-			if i == id {
-				continue;
+async fn broker(mut channel: Channel, mut receiver: Receiver<Event>) {
+	while let Some(event) = receiver.next().await {
+		match event {
+			Event::Message { nick, msg } => {
+				channel.send(nick, msg).await;
 			}
-
-			if let Some(ref mut stream) = stream {
-				stream.write_all(data.as_bytes()).unwrap();
+			Event::Connection { nick, stream } => {
+				match channel.insert(nick, stream) {
+					Ok(_) => {}
+					Err(_) => {}
+				};
 			}
 		}
-		drop(clients_guard);
-		tokio::spawn(async move { handle_client(clients, reader, id) });
-	} else {
-		clients_guard.pop(id);
-		println!("client closed connection!");
 	}
 }
 
@@ -63,30 +78,32 @@ async fn main() {
 		return;
 	}
 	const MAX_CLIENTS: usize = 2;
-	let clients: Arc<Mutex<Clients>> = Arc::new(Mutex::new(Clients::new(MAX_CLIENTS)));
+	const HALL: &str = "HALL";
+	let channel: Channel = Channel::new(String::from(HALL), MAX_CLIENTS);
 
 	let addr = format!("{}:{}", args[1], args[2]);
-	let listener = TcpListener::bind(&addr).unwrap();
+	let mut listener = TcpListener::bind(&addr).await.unwrap();
 
 	println!("running server at: {}", &addr);
 
-	for stream in listener.incoming() {
-		match stream {
-			Ok(stream) => {
-				let mut stream_clone = stream.try_clone().unwrap();
-				let clients = Arc::clone(&clients);
-				let mut clients_guard = clients.lock().unwrap();
-				if let Some(id) = clients_guard.push(stream) {
-					drop(clients_guard);
-					let reader = BufReader::new(stream_clone);
-					tokio::spawn(async move { handle_client(clients, reader, id) });
-				} else {
-					stream_clone.write_all("server full!".as_bytes()).unwrap();
+	let (sender, receiver) = mpsc::unbounded();
+
+	tokio::spawn(async move { broker(channel, receiver).await });
+
+	let server = async move {
+		let mut incoming = listener.incoming();
+		while let Some(stream) = incoming.next().await {
+			match stream {
+				Ok(stream) => {
+					let sender = sender.clone();
+					tokio::spawn(handler(stream, sender));
+				}
+				Err(e) => {
+					println!("connection error: {}", e);
 				}
 			}
-			Err(e) => {
-				println!("connection error: {}", e);
-			}
 		}
-	}
+	};
+
+	server.await;
 }
