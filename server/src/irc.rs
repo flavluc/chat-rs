@@ -6,7 +6,7 @@ use crate::channel::Channel;
 use crate::prelude::*;
 
 pub struct IRC {
-	channels: Vec<Channel>,
+	channels: Vec<Sender<Event>>,
 	sender: Sender<Event>,
 	receiver: Receiver<Event>,
 }
@@ -26,12 +26,12 @@ impl IRC {
 	}
 
 	pub async fn broker(mut irc: IRC) {
-		let hall = Channel::new(String::from(HALL), MAX_CLIENTS, irc.sender.clone());
+		let mut hall = Channel::new(String::from(HALL), MAX_CLIENTS, irc.sender.clone());
 
 		while let Some(event) = irc.receiver.next().await {
 			match event {
 				Event::Connection(stream) => {
-					hall.send_event(Event::Connection(stream));
+					hall.send(Event::Connection(stream)).await.unwrap();
 				}
 				Event::Channel { name, size } => {
 					irc.insert(name, size);

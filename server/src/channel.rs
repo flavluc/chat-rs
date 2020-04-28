@@ -9,43 +9,43 @@ pub struct Channel {
 	topic: String,
 	capacity: usize,
 	irc_sender: Sender<Event>,
-	broker_sender: Sender<Event>,
+	sender: Sender<Event>,
+	receiver: Receiver<Event>,
 	clients: Vec<Client>,
 }
 
 impl Channel {
-	pub fn new(name: String, capacity: usize, irc_sender: Sender<Event>) -> Channel {
+	pub fn new(name: String, capacity: usize, irc_sender: Sender<Event>) -> Sender<Event> {
 		let (sender, receiver): (Sender<Event>, Receiver<Event>) = mpsc::unbounded();
 		let channel = Channel {
 			name,
-			topic: String::new(),
 			capacity,
-			irc_sender,
-			broker_sender: sender,
+			topic: String::new(),
 			clients: Vec::new(),
+			irc_sender,
+			sender,
+			receiver,
 		};
 
-		// tokio::spawn(async move { channel.broker(receiver).await });
+		let sender = channel.sender.clone();
+		tokio::spawn(async move { Channel::broker(channel).await });
 
-		channel
+		sender
 	}
 
-	pub async fn broker(&mut self, mut receiver: Receiver<Event>) {
-		while let Some(event) = receiver.next().await {
+	pub async fn broker(mut channel: Channel) {
+		while let Some(event) = channel.receiver.next().await {
 			match event {
 				Event::Connection(stream) => {
-					let client = Client::new(stream, self.broker_sender.clone());
-					self.clients.push(client);
+					let client = Client::new(stream, channel.sender.clone()).await;
+					channel.clients.push(client);
 				}
 				Event::Message { nick, msg } => {
-					self.send_msg(nick, msg).await;
+					channel.send_msg(nick, msg).await;
 				}
+				_ => {}
 			}
 		}
-	}
-
-	pub fn send_event(&self, event: Event) {
-		// self.broker_sender.send(event);
 	}
 
 	// pub fn is_command(msg: &String) -> bool {
@@ -55,16 +55,12 @@ impl Channel {
 	// }
 
 	pub async fn send_msg(&mut self, nick: String, msg: String) {
-		for client in self.clients.iter() {
-			if let Some(nick) = client.nick() {
-				if nick == nick {
-					continue;
-				}
-				client.send_msg(msg.clone()).await;
+		for client in self.clients.iter_mut() {
+			if client.nick != nick {
+				client.sender.send(msg.clone()).await.unwrap();
 			}
 		}
 	}
-
 	// TODO: Implement a proper error type
 	// pub fn insert(&mut self, nick: String, mut writer: WriteHalf<TcpStream>) -> Result<(), ()> {
 	// 	if self.capacity == self.clients.len() {
