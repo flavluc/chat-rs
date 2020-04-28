@@ -15,6 +15,14 @@ pub enum Event {
 pub const HALL: &str = "HALL";
 pub const MAX_CLIENTS: usize = 2;
 
-pub const JOIN: &str = "JOIN";
 pub const KICK: &str = "KICK";
-pub const commands: [&str; 2] = [JOIN, KICK];
+pub const UNICHAN_CMDS: [&str; 1] = [KICK];
+
+pub const JOIN: &str = "JOIN";
+pub const MULTICHAN_CMDS: [&str; 1] = [JOIN];
+
+pub enum MsgType {
+	Text,
+	UniChanCommand,
+	MultiChanCommand,
+}

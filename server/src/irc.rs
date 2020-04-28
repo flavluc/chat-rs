@@ -25,7 +25,11 @@ impl IRC {
 		sender
 	}
 
-	pub async fn broker(mut irc: IRC) {
+	pub async fn connection(broker: &mut Sender<Event>, stream: TcpStream) {
+		broker.send(Event::Connection(stream)).await.unwrap();
+	}
+
+	async fn broker(mut irc: IRC) {
 		let mut hall = Channel::new(String::from(HALL), MAX_CLIENTS, irc.sender.clone());
 
 		while let Some(event) = irc.receiver.next().await {
@@ -44,20 +48,16 @@ impl IRC {
 		}
 	}
 
-	pub async fn connection(broker: &mut Sender<Event>, stream: TcpStream) {
-		broker.send(Event::Connection(stream)).await.unwrap();
-	}
-
-	pub fn insert(&mut self, name: String, size: usize) {
+	fn insert(&mut self, name: String, size: usize) {
 		self
 			.channels
 			.push(Channel::new(name, size, self.sender.clone()));
 	}
 
-	pub fn run_command(&mut self, nick: String, cmd: String) {
-		let op = commands
+	fn run_command(&mut self, nick: String, cmd: String) {
+		let op = MULTICHAN_CMDS
 			.iter()
-			.find(|&command| &cmd[..commands.len()] == *command);
+			.find(|&command| cmd.len() >= command.len() && &cmd[..command.len()] == *command);
 
 		if let Some(&op) = op {
 			match op {
@@ -67,5 +67,5 @@ impl IRC {
 		}
 	}
 
-	pub fn join(&mut self, nick: String, cmd: String) {}
+	fn join(&mut self, nick: String, cmd: String) {}
 }

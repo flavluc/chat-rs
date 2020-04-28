@@ -6,13 +6,10 @@ use tokio::stream::StreamExt;
 
 use crate::prelude::*;
 
-pub struct Client {
-	pub nick: String,
-	pub sender: Sender<String>,
-}
+pub struct Client {}
 
 impl Client {
-	pub async fn new(stream: TcpStream, channel_sender: Sender<Event>) -> Client {
+	pub async fn new(stream: TcpStream, channel_sender: Sender<Event>) -> (String, Sender<String>) {
 		let (reader, writer) = tokio::io::split(stream);
 		let reader = BufReader::new(reader);
 		let mut lines = reader.lines();
@@ -23,14 +20,10 @@ impl Client {
 
 		let (sender, receiver): (Sender<String>, Receiver<String>) = mpsc::unbounded();
 
-		let client = Client { nick, sender };
+		tokio::spawn(Self::reader(lines, channel_sender, nick.clone()));
+		tokio::spawn(Self::writer(writer, receiver));
 
-		let nick = client.nick.clone();
-
-		tokio::spawn(async move { Self::reader(lines, channel_sender, nick).await });
-		tokio::spawn(async move { Self::writer(writer, receiver).await });
-
-		client
+		(nick, sender)
 	}
 
 	async fn reader(
@@ -39,9 +32,15 @@ impl Client {
 		nick: String,
 	) {
 		while let Some(msg) = lines.next().await {
+			let msg = msg.unwrap().trim().to_string();
+
+			if msg.is_empty() {
+				continue;
+			}
+
 			let event = Event::Message {
 				nick: nick.clone(),
-				msg: msg.unwrap(),
+				msg,
 			};
 			channel_sender.send(event).await.unwrap();
 		}
