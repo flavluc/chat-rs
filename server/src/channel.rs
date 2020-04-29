@@ -44,38 +44,33 @@ impl Channel {
 				Event::Message { nick, msg } => {
 					channel.send_msg(nick, msg).await;
 				}
+				Event::Client { nick, sender } => {
+					channel.client(nick, sender);
+				}
 				_ => {}
 			}
 		}
 	}
 
+	fn client(&mut self, nick: String, sender: Sender<String>) {
+		self.clients.insert(nick, sender);
+	}
+
 	fn msg_type(msg: &String) -> MsgType {
-		let is_multi_command = MULTICHAN_CMDS
+		let is_command = COMMANDS
 			.iter()
 			.any(|&command| msg.len() >= command.len() && &msg[..command.len()] == command);
 
-		if is_multi_command {
-			return MsgType::MultiChanCommand;
+		if is_command {
+			MsgType::Command
+		} else {
+			MsgType::Text
 		}
-
-		let is_single_command = UNICHAN_CMDS
-			.iter()
-			.any(|&command| msg.len() >= command.len() && &msg[..command.len()] == command);
-
-		if is_single_command {
-			return MsgType::UniChanCommand;
-		}
-
-		MsgType::Text
 	}
 
 	pub async fn send_msg(&mut self, nick: String, msg: String) {
 		match Channel::msg_type(&msg) {
-			MsgType::MultiChanCommand => {
-				let event = Event::Command { nick, cmd: msg };
-				self.irc_sender.send(event).await.unwrap();
-			}
-			MsgType::UniChanCommand => {
+			MsgType::Command => {
 				self.run_command(nick, msg).await;
 			}
 			MsgType::Text => {
@@ -89,12 +84,15 @@ impl Channel {
 	}
 
 	async fn run_command(&mut self, nick: String, cmd: String) {
-		let op = UNICHAN_CMDS
+		let op = COMMANDS
 			.iter()
 			.find(|&command| &cmd[..command.len()] == *command);
 
 		if let Some(&op) = op {
 			match op {
+				JOIN => {
+					self.join(nick, cmd).await;
+				}
 				KICK => {
 					self.kick(nick, cmd).await;
 				}
@@ -103,8 +101,8 @@ impl Channel {
 		}
 	}
 
-	async fn kick(&mut self, nick: String, mut cmd: String) {
-		let kicked_nick = cmd.split_off(4);
+	async fn kick(&mut self, nick: String, mut msg: String) {
+		let kicked_nick = msg.split_off(4);
 		match self.clients.get_mut(kicked_nick.trim()) {
 			Some(kicked_sender) => {
 				kicked_sender.send(String::from("KICKED!")).await.unwrap();
@@ -119,48 +117,15 @@ impl Channel {
 		}
 	}
 
-	// TODO: Implement a proper error type
-	// pub fn insert(&mut self, nick: String, mut writer: WriteHalf<TcpStream>) -> Result<(), ()> {
-	// 	if self.capacity == self.clients.len() {
-	// 		return Err(());
-	// 	}
+	async fn join(&mut self, nick: String, mut msg: String) {
+		let sender = self.clients.remove(&nick).unwrap();
+		let channel = msg.split_off(4).trim().to_string();
 
-	// 	if self.clients.contains_key(&nick) {
-	// 		return Err(());
-	// 	}
-
-	// 	let (sender, mut receiver): (Sender<String>, Receiver<String>) = mpsc::unbounded();
-	// 	tokio::spawn(async move {
-	// 		while let Some(msg) = receiver.next().await {
-	// 			writer.write_all(msg.as_bytes()).await.unwrap();
-	// 		}
-	// 	});
-
-	// 	self.clients.insert(nick, sender);
-	// 	Ok(())
-	// }
-
-	// pub fn remove(&mut self, nick: String) -> Option<Sender<String>> {
-	// 	self.clients.remove(&nick)
-	// }
-
-	// pub fn nicks(&self) -> impl Iterator<Item = &String> + '_ {
-	// 	self.clients.keys()
-	// }
-
-	// pub fn join(&mut self, nick: String, stream: TcpStream) -> Option<String> {
-	// match self.clients.insert(stream) {
-	// 	Ok(_) => {
-	// 		let res = self
-	// 			.clients
-	// 			.nicks()
-	// 			.map(|s| &**s) // wtf?
-	// 			.collect::<Vec<&str>>()
-	// 			.join(", ");
-	// 		Some(res)
-	// 	}
-	// 	Err(_) => None,
-	// }
-	// 	None
-	// }
+		let event = Event::Command(Command::Join {
+			nick,
+			channel,
+			sender,
+		});
+		self.irc_sender.send(event).await.unwrap();
+	}
 }

@@ -6,23 +6,34 @@ pub type Receiver<T> = mpsc::UnboundedReceiver<T>;
 
 // TODO: split in different enums(i.e. one for `irc` one for `channels` etc.)
 pub enum Event {
+	Command(Command),
 	Connection(TcpStream),
-	Channel { name: String, size: usize },
-	Command { nick: String, cmd: String },
-	Message { nick: String, msg: String },
+	Client {
+		nick: String,
+		sender: Sender<String>,
+	},
+	Message {
+		nick: String,
+		msg: String,
+	},
+}
+
+pub enum MsgType {
+	Text,
+	Command,
+}
+
+pub enum Command {
+	Join {
+		nick: String,
+		channel: String,
+		sender: Sender<String>,
+	},
 }
 
 pub const HALL: &str = "HALL";
 pub const MAX_CLIENTS: usize = 2;
 
 pub const KICK: &str = "KICK";
-pub const UNICHAN_CMDS: [&str; 1] = [KICK];
-
 pub const JOIN: &str = "JOIN";
-pub const MULTICHAN_CMDS: [&str; 1] = [JOIN];
-
-pub enum MsgType {
-	Text,
-	UniChanCommand,
-	MultiChanCommand,
-}
+pub const COMMANDS: [&str; 2] = [JOIN, KICK];

@@ -1,4 +1,5 @@
 use futures::{channel::mpsc, SinkExt};
+use std::collections::HashMap;
 use tokio::net::TcpStream;
 use tokio::stream::StreamExt;
 
@@ -6,7 +7,7 @@ use crate::channel::Channel;
 use crate::prelude::*;
 
 pub struct IRC {
-	channels: Vec<Sender<Event>>,
+	channels: HashMap<String, Sender<Event>>,
 	sender: Sender<Event>,
 	receiver: Receiver<Event>,
 }
@@ -15,7 +16,7 @@ impl IRC {
 	pub fn start() -> Sender<Event> {
 		let (sender, receiver): (Sender<Event>, Receiver<Event>) = mpsc::unbounded();
 		let irc = IRC {
-			channels: Vec::new(),
+			channels: HashMap::new(),
 			sender,
 			receiver,
 		};
@@ -37,35 +38,37 @@ impl IRC {
 				Event::Connection(stream) => {
 					hall.send(Event::Connection(stream)).await.unwrap();
 				}
-				Event::Channel { name, size } => {
-					irc.insert(name, size);
-				}
-				Event::Command { nick, cmd } => {
-					irc.run_command(nick, cmd);
+				Event::Command(command) => {
+					irc.run_command(command).await;
 				}
 				_ => {}
 			}
 		}
 	}
 
-	fn insert(&mut self, name: String, size: usize) {
-		self
-			.channels
-			.push(Channel::new(name, size, self.sender.clone()));
+	async fn run_command(&mut self, command: Command) {
+		match command {
+			Command::Join {
+				nick,
+				channel,
+				sender,
+			} => {
+				self.join(nick, channel, sender).await;
+			}
+			_ => (),
+		};
 	}
 
-	fn run_command(&mut self, nick: String, cmd: String) {
-		let op = MULTICHAN_CMDS
-			.iter()
-			.find(|&command| cmd.len() >= command.len() && &cmd[..command.len()] == *command);
-
-		if let Some(&op) = op {
-			match op {
-				JOIN => self.join(nick, cmd),
-				_ => (),
-			};
+	async fn join(&mut self, nick: String, channel_name: String, sender: Sender<String>) {
+		let event = Event::Client { nick, sender };
+		match self.channels.get_mut(&channel_name) {
+			Some(channel) => {
+				channel.send(event).await.unwrap();
+			}
+			None => {
+				let mut channel = Channel::new(channel_name, MAX_CLIENTS, self.sender.clone());
+				channel.send(event).await.unwrap();
+			}
 		}
 	}
-
-	fn join(&mut self, nick: String, cmd: String) {}
 }
