@@ -38,8 +38,14 @@ impl Channel {
 		while let Some(event) = channel.receiver.next().await {
 			match event {
 				Event::Connection(stream) => {
-					let (nick, sender) = Client::new(stream, channel.sender.clone()).await;
-					channel.clients.insert(nick, sender);
+					let mut channel_sender = channel.sender.clone();
+					tokio::spawn(async move {
+						let (nick, sender) = Client::new(stream, channel_sender.clone()).await;
+						channel_sender
+							.send(Event::Client { nick, sender })
+							.await
+							.unwrap();
+					});
 				}
 				Event::Message { nick, msg } => {
 					channel.send_msg(nick, msg).await;
