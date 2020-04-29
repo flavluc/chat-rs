@@ -12,7 +12,7 @@ pub struct Channel {
 	irc_sender: Sender<Event>,
 	sender: Sender<Event>,
 	receiver: Receiver<Event>,
-	clients: HashMap<String, Sender<String>>,
+	clients: HashMap<String, Sender<Action>>,
 }
 
 impl Channel {
@@ -45,39 +45,34 @@ impl Channel {
 					channel.send_msg(nick, msg).await;
 				}
 				Event::Client { nick, sender } => {
-					channel.client(nick, sender);
+					channel.client(nick, sender).await;
 				}
 				_ => {}
 			}
 		}
 	}
 
-	fn client(&mut self, nick: String, sender: Sender<String>) {
+	async fn client(&mut self, nick: String, mut sender: Sender<Action>) {
+		sender
+			.send(Action::Join(self.sender.clone()))
+			.await
+			.unwrap();
 		self.clients.insert(nick, sender);
 	}
 
-	fn msg_type(msg: &String) -> MsgType {
-		let is_command = COMMANDS
+	fn is_command(msg: &String) -> bool {
+		COMMANDS
 			.iter()
-			.any(|&command| msg.len() >= command.len() && &msg[..command.len()] == command);
-
-		if is_command {
-			MsgType::Command
-		} else {
-			MsgType::Text
-		}
+			.any(|&command| msg.len() >= command.len() && &msg[..command.len()] == command)
 	}
 
 	pub async fn send_msg(&mut self, nick: String, msg: String) {
-		match Channel::msg_type(&msg) {
-			MsgType::Command => {
-				self.run_command(nick, msg).await;
-			}
-			MsgType::Text => {
-				for (nick_to_send, sender) in self.clients.iter_mut() {
-					if nick_to_send != &nick {
-						sender.send(msg.clone()).await.unwrap();
-					}
+		if Channel::is_command(&msg) {
+			self.run_command(nick, msg).await;
+		} else {
+			for (nick_to_send, sender) in self.clients.iter_mut() {
+				if nick_to_send != &nick {
+					sender.send(Action::Send(msg.clone())).await.unwrap();
 				}
 			}
 		}
@@ -105,12 +100,15 @@ impl Channel {
 		let kicked_nick = msg.split_off(4);
 		match self.clients.get_mut(kicked_nick.trim()) {
 			Some(kicked_sender) => {
-				kicked_sender.send(String::from("KICKED!")).await.unwrap();
+				kicked_sender
+					.send(Action::Send(String::from("KICKED!")))
+					.await
+					.unwrap();
 			}
 			None => {
 				let kicker_sender = self.clients.get_mut(&nick).unwrap();
 				kicker_sender
-					.send(String::from("USER DOES NOT EXIST!"))
+					.send(Action::Send(String::from("USER DOES NOT EXIST!")))
 					.await
 					.unwrap();
 			}

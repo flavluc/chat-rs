@@ -59,7 +59,7 @@ impl IRC {
 		};
 	}
 
-	async fn join(&mut self, nick: String, channel_name: String, sender: Sender<String>) {
+	async fn join(&mut self, nick: String, channel_name: String, sender: Sender<Action>) {
 		let event = Event::Client { nick, sender };
 		match self.channels.get_mut(&channel_name) {
 			Some(channel) => {

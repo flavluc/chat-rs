@@ -10,7 +10,7 @@ pub enum Event {
 	Connection(TcpStream),
 	Client {
 		nick: String,
-		sender: Sender<String>,
+		sender: Sender<Action>,
 	},
 	Message {
 		nick: String,
@@ -18,21 +18,22 @@ pub enum Event {
 	},
 }
 
-pub enum MsgType {
-	Text,
-	Command,
-}
-
 pub enum Command {
 	Join {
 		nick: String,
 		channel: String,
-		sender: Sender<String>,
+		sender: Sender<Action>,
 	},
 }
 
+// TODO: choose a better name
+pub enum Action {
+	Send(String),
+	Join(Sender<Event>),
+}
+
 pub const HALL: &str = "HALL";
-pub const MAX_CLIENTS: usize = 2;
+pub const MAX_CLIENTS: usize = 5;
 
 pub const KICK: &str = "KICK";
 pub const JOIN: &str = "JOIN";
