@@ -33,7 +33,7 @@ impl IRC {
 	async fn broker(mut irc: IRC) {
 		let mut hall = Channel::new(
 			String::from(HALL),
-			String::from(ADMIN),
+			String::from(HALL_ADMIN),
 			MAX_CLIENTS,
 			irc.sender.clone(),
 		);

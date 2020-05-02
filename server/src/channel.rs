@@ -1,5 +1,5 @@
 use futures::{channel::mpsc, SinkExt};
-use serde::Serialize;
+use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json;
 use std::collections::HashMap;
 use tokio::stream::StreamExt;
@@ -7,7 +7,6 @@ use tokio::stream::StreamExt;
 use crate::client::Client;
 use crate::prelude::*;
 
-#[derive(Serialize)]
 struct ChannelInfo {
 	name: String,
 	topic: String,
@@ -17,10 +16,26 @@ struct ChannelInfo {
 
 pub struct Channel {
 	info: ChannelInfo,
-	irc_sender: Sender<Event>,
 	sender: Sender<Event>,
 	receiver: Receiver<Event>,
+	irc_sender: Sender<Event>,
 	clients: HashMap<String, Sender<Action>>,
+}
+
+impl Serialize for Channel {
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		let mut state = serializer.serialize_struct("Channel", 5)?;
+		state.serialize_field("name", &self.info.name)?;
+		state.serialize_field("topic", &self.info.topic)?;
+		state.serialize_field("admin", &self.info.admin)?;
+		state.serialize_field("capacity", &self.info.capacity)?;
+		let users: Vec<&str> = self.clients.keys().map(|s| s.as_ref()).collect();
+		state.serialize_field("users", &users)?;
+		state.end()
+	}
 }
 
 impl Channel {
@@ -79,12 +94,8 @@ impl Channel {
 		let join_action = Action::Join(self.sender.clone());
 		sender.send(join_action).await.unwrap();
 
-		let mut users: Vec<&str> = self.clients.keys().map(|s| s.as_ref()).collect();
-		users.push(&nick);
-
-		let serialized_info = serde_json::to_string(&self.info).unwrap();
-		let welcome_action = Action::Send(serialized_info);
-		sender.send(welcome_action).await.unwrap();
+		let serialized = serde_json::to_string(&self).unwrap();
+		sender.send(Action::Send(serialized)).await.unwrap();
 
 		self.clients.insert(nick, sender);
 	}
