@@ -1,3 +1,4 @@
+use chrono::prelude::*;
 use futures::{channel::mpsc, SinkExt};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json;
@@ -94,8 +95,9 @@ impl Channel {
 		let join_action = Action::Join(self.sender.clone());
 		sender.send(join_action).await.unwrap();
 
-		let serialized = serde_json::to_string(&self).unwrap();
-		sender.send(Action::Send(serialized)).await.unwrap();
+		let data = serde_json::to_string(&self).unwrap();
+		let result = ClientResult::CommandSuccess { data };
+		sender.send(Action::Send(result)).await.unwrap();
 
 		self.clients.insert(nick, sender);
 	}
@@ -106,13 +108,18 @@ impl Channel {
 			.any(|&command| msg.len() >= command.len() && &msg[..command.len()] == command)
 	}
 
-	pub async fn send_msg(&mut self, nick: String, msg: String) {
-		if Channel::is_command(&msg) {
-			self.run_command(nick, msg).await;
+	pub async fn send_msg(&mut self, nick: String, message: String) {
+		if Channel::is_command(&message) {
+			self.run_command(nick, message).await;
 		} else {
+			let result = ClientResult::Message {
+				time: Local::now(),
+				nick: nick.clone(),
+				message,
+			};
 			for (client_nick, client) in self.clients.iter_mut() {
 				if client_nick != &nick {
-					client.send(Action::Send(msg.clone())).await.unwrap();
+					client.send(Action::Send(result.clone())).await.unwrap();
 				}
 			}
 		}
@@ -139,31 +146,44 @@ impl Channel {
 	async fn kick(&mut self, nick: String, mut msg: String) {
 		let kicked_nick = msg.split_off(4);
 		match self.clients.get_mut(kicked_nick.trim()) {
-			Some(kicked_sender) => {
-				kicked_sender
-					.send(Action::Send(String::from("KICKED!")))
-					.await
-					.unwrap();
-			}
-			None => {
-				let kicker_sender = self.clients.get_mut(&nick).unwrap();
-				kicker_sender
-					.send(Action::Send(String::from("USER DOES NOT EXIST!")))
-					.await
-					.unwrap();
-			}
+			Some(_) => {}
+			None => {}
 		}
 	}
 
-	async fn join(&mut self, nick: String, mut msg: String) {
-		let sender = self.clients.remove(&nick).unwrap();
-		let channel = msg.split_off(4).trim().to_string();
+	fn parse_channel_name(mut name: String) -> Result<String, ()> {
+		let channel = name.split_off(4).trim().to_string();
 
-		let event = Event::Command(Command::Join {
-			nick,
-			channel,
-			sender,
-		});
-		self.irc_sender.send(event).await.unwrap();
+		match channel.chars().next().unwrap() {
+			'#' | '&' => {
+				if channel.contains(" ") {
+					return Err(());
+				}
+
+				Ok(channel[1..].to_string())
+			}
+			_ => Err(()),
+		}
+	}
+
+	async fn join(&mut self, nick: String, msg: String) {
+		match Channel::parse_channel_name(msg) {
+			Ok(channel) => {
+				let client = self.clients.remove(&nick).unwrap();
+				let event = Event::Command(Command::Join {
+					nick,
+					channel,
+					sender: client,
+				});
+				self.irc_sender.send(event).await.unwrap();
+			}
+			Err(_) => {
+				let client = self.clients.get_mut(&nick).unwrap();
+				let error = INVALID_CHANNEL_NAME_ERROR.to_string();
+				let hint = INVALID_CHANNEL_NAME_HINT.to_string();
+				let result = ClientResult::CommandFailure { error, hint };
+				client.send(Action::Send(result)).await.unwrap();
+			}
+		}
 	}
 }

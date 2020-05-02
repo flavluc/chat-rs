@@ -74,8 +74,9 @@ impl IRC {
 				channel.send(event).await.unwrap();
 			}
 			None => {
-				let mut channel =
-					Channel::new(channel_name.clone(), nick, MAX_CLIENTS, self.sender.clone());
+				let name = channel_name.clone();
+				let sender = self.sender.clone();
+				let mut channel = Channel::new(name, nick, MAX_CLIENTS, sender);
 				channel.send(event).await.unwrap();
 				self.channels.insert(channel_name, channel);
 			}

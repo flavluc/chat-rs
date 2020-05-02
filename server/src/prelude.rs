@@ -1,4 +1,6 @@
+use chrono::prelude::*;
 use futures::channel::mpsc;
+use serde::Serialize;
 use tokio::net::TcpStream;
 
 pub type Sender<T> = mpsc::UnboundedSender<T>;
@@ -28,8 +30,24 @@ pub enum Command {
 
 // TODO: choose a better name
 pub enum Action {
-	Send(String),
+	Send(ClientResult),
 	Join(Sender<Event>),
+}
+
+#[derive(Serialize, Clone)]
+pub enum ClientResult {
+	Message {
+		time: DateTime<Local>,
+		nick: String,
+		message: String,
+	},
+	CommandSuccess {
+		data: String,
+	},
+	CommandFailure {
+		error: String,
+		hint: String,
+	},
 }
 
 pub const HALL: &str = "HALL";
@@ -40,3 +58,12 @@ pub const MAX_CLIENTS: usize = 5;
 pub const KICK: &str = "KICK";
 pub const JOIN: &str = "JOIN";
 pub const COMMANDS: [&str; 2] = [JOIN, KICK];
+
+pub const INVALID_CHANNEL_NAME_ERROR: &str = "INVALID_CHANNEL_NAME_ERROR";
+pub const INVALID_CHANNEL_NAME_HINT: &str =
+	"Channels names are strings (beginning with a '&' or '#' character) of
+length up to 200 characters.  Apart from the the requirement that the
+first character being either '&' or '#'; the only restriction on a
+channel name is that it may not contain any spaces (' '), a control G
+(^G or ASCII 7), or a comma (',' which is used as a list item
+separator by the protocol).";

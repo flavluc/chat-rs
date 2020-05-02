@@ -1,4 +1,5 @@
 use futures::{channel::mpsc, SinkExt};
+use serde_json;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader, Lines, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -57,8 +58,11 @@ impl Client {
 	) {
 		while let Some(action) = receiver.next().await {
 			match action {
-				Action::Send(msg) => {
-					writer.write_all(msg.as_bytes()).await.unwrap();
+				Action::Send(result) => {
+					writer
+						.write_all(serde_json::to_string(&result).unwrap().as_bytes())
+						.await
+						.unwrap();
 				}
 				Action::Join(sender) => {
 					let mut channel_sender = channel_sender.lock().await;
