@@ -33,6 +33,8 @@ pub enum Action {
 }
 
 pub const HALL: &str = "HALL";
+pub const ADMIN: &str = "SERVER";
+pub const DEFAULT_TOPIC: &str = "Default Topic of the Channel.";
 pub const MAX_CLIENTS: usize = 5;
 
 pub const KICK: &str = "KICK";

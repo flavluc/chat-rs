@@ -1,14 +1,22 @@
 use futures::{channel::mpsc, SinkExt};
+use serde::Serialize;
+use serde_json;
 use std::collections::HashMap;
 use tokio::stream::StreamExt;
 
 use crate::client::Client;
 use crate::prelude::*;
 
-pub struct Channel {
+#[derive(Serialize)]
+struct ChannelInfo {
 	name: String,
 	topic: String,
+	admin: String,
 	capacity: usize,
+}
+
+pub struct Channel {
+	info: ChannelInfo,
 	irc_sender: Sender<Event>,
 	sender: Sender<Event>,
 	receiver: Receiver<Event>,
@@ -16,12 +24,21 @@ pub struct Channel {
 }
 
 impl Channel {
-	pub fn new(name: String, capacity: usize, irc_sender: Sender<Event>) -> Sender<Event> {
-		let (sender, receiver): (Sender<Event>, Receiver<Event>) = mpsc::unbounded();
-		let channel = Channel {
+	pub fn new(
+		name: String,
+		admin: String,
+		capacity: usize,
+		irc_sender: Sender<Event>,
+	) -> Sender<Event> {
+		let info = ChannelInfo {
 			name,
 			capacity,
-			topic: String::new(),
+			admin,
+			topic: String::from(DEFAULT_TOPIC),
+		};
+		let (sender, receiver): (Sender<Event>, Receiver<Event>) = mpsc::unbounded();
+		let channel = Channel {
+			info,
 			clients: HashMap::new(),
 			irc_sender,
 			sender,
@@ -59,10 +76,16 @@ impl Channel {
 	}
 
 	async fn client(&mut self, nick: String, mut sender: Sender<Action>) {
-		sender
-			.send(Action::Join(self.sender.clone()))
-			.await
-			.unwrap();
+		let join_action = Action::Join(self.sender.clone());
+		sender.send(join_action).await.unwrap();
+
+		let mut users: Vec<&str> = self.clients.keys().map(|s| s.as_ref()).collect();
+		users.push(&nick);
+
+		let serialized_info = serde_json::to_string(&self.info).unwrap();
+		let welcome_action = Action::Send(serialized_info);
+		sender.send(welcome_action).await.unwrap();
+
 		self.clients.insert(nick, sender);
 	}
 
@@ -76,9 +99,9 @@ impl Channel {
 		if Channel::is_command(&msg) {
 			self.run_command(nick, msg).await;
 		} else {
-			for (nick_to_send, sender) in self.clients.iter_mut() {
-				if nick_to_send != &nick {
-					sender.send(Action::Send(msg.clone())).await.unwrap();
+			for (client_nick, client) in self.clients.iter_mut() {
+				if client_nick != &nick {
+					client.send(Action::Send(msg.clone())).await.unwrap();
 				}
 			}
 		}

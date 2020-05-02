@@ -31,7 +31,12 @@ impl IRC {
 	}
 
 	async fn broker(mut irc: IRC) {
-		let mut hall = Channel::new(String::from(HALL), MAX_CLIENTS, irc.sender.clone());
+		let mut hall = Channel::new(
+			String::from(HALL),
+			String::from(ADMIN),
+			MAX_CLIENTS,
+			irc.sender.clone(),
+		);
 
 		while let Some(event) = irc.receiver.next().await {
 			match event {
@@ -60,14 +65,19 @@ impl IRC {
 	}
 
 	async fn join(&mut self, nick: String, channel_name: String, sender: Sender<Action>) {
-		let event = Event::Client { nick, sender };
+		let event = Event::Client {
+			nick: nick.clone(),
+			sender,
+		};
 		match self.channels.get_mut(&channel_name) {
 			Some(channel) => {
 				channel.send(event).await.unwrap();
 			}
 			None => {
-				let mut channel = Channel::new(channel_name, MAX_CLIENTS, self.sender.clone());
+				let mut channel =
+					Channel::new(channel_name.clone(), nick, MAX_CLIENTS, self.sender.clone());
 				channel.send(event).await.unwrap();
+				self.channels.insert(channel_name, channel);
 			}
 		}
 	}
